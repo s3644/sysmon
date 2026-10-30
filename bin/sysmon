@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Live resource monitor: http://127.0.0.1:8765 (see README.md)
+# sysmon [start|stop|restart|status|log] [extra server.py args]
+DIR=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+LOG=$DIR/run/sysmon.log; PIDF=$DIR/run/sysmon.pid
+CLI_BIND=$SYSMON_BIND   # a value given on the command line wins over sysmon.env
+[ -f "$DIR/sysmon.env" ] && . "$DIR/sysmon.env"
+BIND=${CLI_BIND:-${SYSMON_BIND:-127.0.0.1}}   # set SYSMON_BIND=0.0.0.0 in sysmon.env to share on the LAN
+# Trust the pid file only if that pid is still this server (pids are reused after a reboot or crash).
+running() { [ -f "$PIDF" ] && tr '\0' ' ' 2>/dev/null < "/proc/$(cat "$PIDF")/cmdline" | grep -qF "$DIR/server.py"; }
+start() {
+  if running; then echo "already running (pid $(cat "$PIDF"))"; return 0; fi
+  mkdir -p "$DIR/run"
+  # SYSMON_ARGS (from sysmon.env) is word-split on purpose, e.g. SYSMON_ARGS="--port 9000"
+  # shellcheck disable=SC2086
+  setsid nohup python3 "$DIR/server.py" --bind "$BIND" $SYSMON_ARGS "$@" >"$LOG" 2>&1 < /dev/null & echo $! >"$PIDF"
+  sleep 1; running && head -1 "$LOG" || { echo "failed:"; cat "$LOG"; return 1; }
+}
+stop() { running && kill "$(cat "$PIDF")" && echo stopped; rm -f "$PIDF"; }
+cmd=${1:-start}; shift 2>/dev/null
+case "$cmd" in
+  start)   start "$@" ;;
+  stop)    stop ;;
+  restart) stop; sleep 1; start "$@" ;;
+  status)  running && echo "running (pid $(cat "$PIDF"))" || echo "not running" ;;
+  log)     tail -n 50 "$LOG" ;;
+  *)       echo "usage: sysmon [start|stop|restart|status|log] [server args]"; exit 2 ;;
+esac

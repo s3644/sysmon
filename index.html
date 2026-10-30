@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab Resource Monitor</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --s1: #2a78d6; --s2: #eb6834;
+  --seq-lo: #e4eefb; --seq-hi: #184f95;
+  --good: #0ca30c; --warning: #fab219; --critical: #d03b3b; --good-ink: #006300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926;
+    --seq-lo: #1f2630; --seq-hi: #86b6ef; --good-ink: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926;
+  --seq-lo: #1f2630; --seq-hi: #86b6ef; --good-ink: #0ca30c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.num { font-variant-numeric: tabular-nums; }
+header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+  padding: 14px 16px; position: sticky; top: 0; z-index: 5; background: var(--page); border-bottom: 1px solid var(--border); }
+header.top h1 { font-size: 17px; margin: 0; font-weight: 650; }
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: transparent; color: var(--ink-2); padding: 5px 10px; font: inherit; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--s1); }
+#conn { color: var(--muted); font-size: 12px; }
+main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr)); gap: 16px; padding: 16px; }
+.host { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.host-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 12px; }
+.host-head h2 { margin: 0; font-size: 18px; }
+.sub { color: var(--muted); font-size: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap; }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.up .dot { background: var(--good); }
+.pill.connecting .dot { background: var(--warning); }
+.pill.down .dot { background: var(--critical); }
+.err { color: var(--critical); font-size: 12px; margin-top: 4px; word-break: break-all; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.tile { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+.tile .k { color: var(--ink-2); font-size: 12px; }
+.tile .v { font-size: 22px; font-weight: 650; line-height: 1.2; }
+.tile .d { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meter { height: 4px; border-radius: 2px; background: var(--grid); margin-top: 6px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--s1); border-radius: 2px; transition: width .4s; }
+.meter i.warn { background: var(--warning); } .meter i.crit { background: var(--critical); }
+h3 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 14px 0 6px; display: flex; justify-content: space-between; gap: 8px; }
+h3 .val { color: var(--ink); font-weight: 600; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 4px 16px; }
+.chart { position: relative; }
+.chart canvas { width: 100%; height: 110px; display: block; }
+.legend { display: inline-flex; gap: 10px; font-weight: 400; color: var(--ink-2); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 2px; margin-right: 4px; vertical-align: middle; background: var(--c); }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); color: var(--ink);
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); white-space: nowrap; display: none; z-index: 2; }
+.cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 2px; }
+.cores div { height: 26px; border-radius: 4px; font-size: 10px; display: flex; align-items: center; justify-content: center; }
+.disk { display: grid; grid-template-columns: minmax(80px, 140px) 1fr auto; gap: 8px; align-items: center; font-size: 12px; margin: 4px 0; }
+.disk .bar { height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+.disk .bar i { display: block; height: 100%; background: var(--s1); }
+.disk .bar i.warn { background: var(--warning); } .disk .bar i.crit { background: var(--critical); }
+.disk .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--grid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+th { color: var(--muted); font-weight: 500; }
+td.r, th.r { text-align: right; }
+.tablewrap { overflow-x: auto; }
+.empty { color: var(--muted); font-size: 12px; }
+.stale { opacity: .55; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Lab Resource Monitor</h1>
+  <div class="controls">
+    <div class="seg" id="range" role="group" aria-label="Time range">
+      <button data-r="300">5 min</button><button data-r="900" aria-pressed="true">15 min</button><button data-r="3600">60 min</button>
+    </div>
+    <div class="seg" id="sort" role="group" aria-label="Process sort">
+      <button data-s="cpu" aria-pressed="true">Top CPU</button><button data-s="mem">Top RAM</button>
+    </div>
+    <button class="seg" id="theme" style="padding:5px 10px;background:transparent;color:var(--ink-2);cursor:pointer;font:inherit" title="Toggle theme">◐</button>
+    <span id="conn">connecting…</span>
+  </div>
+</header>
+<main id="hosts"></main>
+
+<script>
+const KEEP = 3600;
+const st = { hosts: {}, range: 900, sort: "cpu" };
+try { st.range = +localStorage.getItem("sysmon.range") || 900; st.sort = localStorage.getItem("sysmon.sort") || "cpu";
+  const t = localStorage.getItem("sysmon.theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+const GiB = 2 ** 30;
+const fmtGiB = b => b == null ? "–" : (b / GiB).toFixed(b < 10 * GiB ? 1 : 0);
+function fmtBytes(b) {
+  if (b == null) return "–";
+  const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0;
+  while (Math.abs(b) >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (b >= 100 || i === 0 ? b.toFixed(0) : b.toFixed(1)) + " " + u[i];
+}
+const fmtRate = b => fmtBytes(b) + "/s";
+const fmtPct = v => v == null ? "–" : v.toFixed(0) + "%";
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+const level = p => p >= 95 ? "crit" : p >= 85 ? "warn" : "";
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function slim(s) {
+  const sum = (o, i) => Object.values(o).reduce((a, v) => a + v[i], 0);
+  return { ts: s.ts, cpu: s.cpu, mem: s.mem.used, gpu: s.gpus.map(g => g.util), gmem: s.gpus.map(g => g.mem_used),
+    gpow: s.gpus.map(g => g.power), rx: sum(s.net_io, 0), tx: sum(s.net_io, 1),
+    rd: sum(s.disk_io, 0), wr: sum(s.disk_io, 1), tcpu: s.temp.cpu };
+}
+
+/* ---------- line chart (canvas, one y-scale, crosshair tooltip) ---------- */
+class Chart {
+  constructor(el, opt) {
+    this.el = el; this.opt = opt; this.canvas = el.querySelector("canvas"); this.tip = el.querySelector(".tip");
+    this.hover = null;
+    this.canvas.addEventListener("mousemove", e => { this.hover = e.offsetX; this.draw(); });
+    this.canvas.addEventListener("mouseleave", () => { this.hover = null; this.draw(); });
+  }
+  set(data, now, range, gap) { this.data = data; this.now = now; this.range = range; this.gap = gap; this.draw(); }
+  draw() {
+    const c = this.canvas, dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+    if (!W || !this.data) return;
+    if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
+    const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const { series, max: fixedMax, fmt } = this.opt;
+    const t1 = this.now, t0 = t1 - this.range;
+    const pts = this.data.filter(d => d.ts >= t0 - 5);
+    let max = fixedMax;
+    if (max == null) {
+      let m = 0; for (const d of pts) for (const s of series) { const v = s.get(d); if (v != null && v > m) m = v; }
+      max = niceMax(m || 1);
+    }
+    const L = 0, R = W - 1, T = 6, B = H - 16;
+    const x = t => L + (t - t0) / (t1 - t0) * (R - L), y = v => B - v / max * (B - T);
+    g.font = "10px system-ui, sans-serif"; g.lineWidth = 1;
+    for (const f of [0.5, 1]) {
+      g.strokeStyle = css("--grid"); g.beginPath(); g.moveTo(L, Math.round(y(max * f)) + .5); g.lineTo(R, Math.round(y(max * f)) + .5); g.stroke();
+    }
+    g.fillStyle = css("--muted"); g.textBaseline = "top";
+    g.fillText(fmt(max), L + 2, T + 2);
+    g.strokeStyle = css("--axis"); g.beginPath(); g.moveTo(L, B + .5); g.lineTo(R, B + .5); g.stroke();
+    g.textBaseline = "alphabetic"; g.fillText(`−${Math.round(this.range / 60)} min`, L + 2, H - 3);
+    const nowTxt = "now"; g.fillText(nowTxt, R - g.measureText(nowTxt).width - 2, H - 3);
+    g.lineWidth = 2; g.lineJoin = "round";
+    series.forEach(s => {
+      g.strokeStyle = css(s.color); g.beginPath(); let pen = false, prevT = null;
+      for (const d of pts) {
+        const v = s.get(d);
+        if (v == null || (prevT != null && d.ts - prevT > this.gap)) { pen = false; } // gap when host was down
+        if (v != null) { const X = x(d.ts), Y = y(Math.min(v, max)); pen ? g.lineTo(X, Y) : g.moveTo(X, Y); pen = true; }
+        prevT = d.ts;
+      }
+      g.stroke();
+    });
+    if (this.hover == null || !pts.length) { this.tip.style.display = "none"; return; }
+    const th = t0 + (this.hover - L) / (R - L) * (t1 - t0);
+    let best = pts[0]; for (const d of pts) if (Math.abs(d.ts - th) < Math.abs(best.ts - th)) best = d;
+    const X = x(best.ts);
+    g.strokeStyle = css("--axis"); g.lineWidth = 1; g.beginPath(); g.moveTo(X + .5, T); g.lineTo(X + .5, B); g.stroke();
+    series.forEach(s => { const v = s.get(best); if (v == null) return;
+      g.fillStyle = css("--surface"); g.beginPath(); g.arc(X, y(Math.min(v, max)), 5, 0, 7); g.fill();
+      g.fillStyle = css(s.color); g.beginPath(); g.arc(X, y(Math.min(v, max)), 3.5, 0, 7); g.fill(); });
+    const ago = Math.round(t1 - best.ts);
+    this.tip.innerHTML = `<div class="sub">${ago ? ago + " s ago" : "now"} · ${new Date(best.ts * 1000).toLocaleTimeString()}</div>` +
+      series.map(s => `<div class="num">${series.length > 1 ? esc(s.label) + ": " : ""}<b>${fmt(s.get(best))}</b></div>`).join("");
+    this.tip.style.display = "block";
+    const tw = this.tip.offsetWidth;
+    this.tip.style.left = Math.max(0, Math.min(W - tw, X + 10 > W - tw ? X - tw - 10 : X + 10)) + "px";
+    this.tip.style.top = "4px";
+  }
+}
+function niceMax(v) {
+  const p = 10 ** Math.floor(Math.log10(v)), n = v / p;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+}
+
+/* ---------- host panel ---------- */
+const chartDefs = [
+  { k: "cpu", title: "CPU", series: [{ color: "--s1", get: d => d.cpu }], max: 100, fmt: fmtPct },
+  { k: "mem", title: "RAM used", series: [{ color: "--s1", get: d => d.mem / GiB }], maxFn: h => h.last && h.last.mem.total / GiB, fmt: v => v == null ? "–" : v.toFixed(0) + " GiB" },
+  { k: "gpu", title: "GPU utilisation", series: [{ color: "--s1", get: d => d.gpu[0] }], max: 100, fmt: fmtPct },
+  { k: "gpow", title: "GPU power", series: [{ color: "--s1", get: d => d.gpow[0] }], maxFn: h => h.last && h.last.gpus[0] && h.last.gpus[0].power_limit, fmt: v => v == null ? "–" : v.toFixed(0) + " W" },
+  { k: "net", title: "Network", series: [{ label: "in", color: "--s1", get: d => d.rx }, { label: "out", color: "--s2", get: d => d.tx }], fmt: fmtRate },
+  { k: "disk", title: "Disk I/O", series: [{ label: "read", color: "--s1", get: d => d.rd }, { label: "write", color: "--s2", get: d => d.wr }], fmt: fmtRate },
+];
+
+function buildHost(info) {
+  const el = document.createElement("section");
+  el.className = "host"; el.id = info.id;
+  el.innerHTML = `
+    <div class="host-head">
+      <div><h2>${esc(info.label)}</h2><div class="sub" data-k="ident">${esc(info.target)}</div></div>
+      <div style="text-align:right"><span class="pill" data-k="pill"><span class="dot"></span><span data-k="status"></span></span>
+      <div class="err" data-k="err"></div></div>
+    </div>
+    <div class="tiles" data-k="tiles"></div>
+    <div class="charts">${chartDefs.map(c => `
+      <div class="chart" data-c="${c.k}"><h3><span>${c.title}${c.series.length > 1 ? ` <span class="legend">${c.series.map(s => `<span style="--c:var(${s.color})">${s.label}</span>`).join("")}</span>` : ""}</span><span class="val num" data-v></span></h3>
+      <canvas></canvas><div class="tip"></div></div>`).join("")}</div>
+    <h3><span>CPU cores</span><span class="val num" data-k="load"></span></h3><div class="cores" data-k="cores"></div>
+    <h3><span>Disks</span></h3><div data-k="disks"></div>
+    <h3><span>GPU processes</span></h3><div class="tablewrap" data-k="gprocs"></div>
+    <h3><span data-k="ptitle">Processes</span><span class="val num" data-k="nproc"></span></h3><div class="tablewrap" data-k="procs"></div>`;
+  document.getElementById("hosts").appendChild(el);
+  const h = { info, el, history: [], last: null, charts: {} };
+  chartDefs.forEach(c => { h.charts[c.k] = new Chart(el.querySelector(`[data-c="${c.k}"]`), c); });
+  return h;
+}
+const q = (h, k) => h.el.querySelector(`[data-k="${k}"]`);
+
+function setStatus(h) {
+  const { status, error } = h.info;
+  const pill = q(h, "pill"); pill.className = "pill " + status;
+  q(h, "status").textContent = status === "up" ? "live" : status;
+  q(h, "err").textContent = status === "down" ? error : "";
+  h.el.classList.toggle("stale", status !== "up");
+}
+
+// busy=true: full utilisation is the goal (CPU/GPU), so no warning colour
+function tile(k, v, d, p, busy) {
+  return `<div class="tile"><div class="k">${k}</div><div class="v num">${v}</div><div class="d num" title="${esc(d)}">${esc(d)}</div>` +
+    (p == null ? "" : `<div class="meter"><i class="${busy ? "" : level(p)}" style="width:${Math.min(100, p)}%"></i></div>`) + `</div>`;
+}
+
+function renderHost(h) {
+  const s = h.last; if (!s) return;
+  q(h, "ident").textContent = `${s.host} · ${s.cpu_model} · ${s.ncpu} threads · up ${fmtUptime(s.uptime)}`;
+  const m = s.mem, mp = 100 * m.used / m.total, g = s.gpus[0];
+  let t = tile("CPU", fmtPct(s.cpu), `load ${s.load.map(x => x.toFixed(1)).join(" ")}`, s.cpu, true);
+  t += tile("RAM", `${fmtGiB(m.used)}<span class="sub"> / ${fmtGiB(m.total)} GiB</span>`,
+    `avail ${fmtGiB(m.avail)} · swap ${fmtGiB(m.swap_used)}`, mp);
+  if (g) {
+    t += tile("GPU", fmtPct(g.util), g.name.replace("NVIDIA ", "") + (g.clock ? ` · ${g.clock} MHz` : ""), g.util, true);
+    t += g.mem_total
+      ? tile("VRAM", `${fmtGiB(g.mem_used)}<span class="sub"> / ${fmtGiB(g.mem_total)} GiB</span>`, `${g.procs.length} process${g.procs.length === 1 ? "" : "es"}`, 100 * g.mem_used / g.mem_total)
+      : tile("VRAM", "unified", `shares RAM · GPU apps ${fmtBytes(g.procs.reduce((a, p) => a + (p.mem || 0), 0))}`, null);
+    t += tile("GPU power", g.power == null ? "–" : g.power.toFixed(0) + " W", g.power_limit ? `limit ${g.power_limit.toFixed(0)} W` : "no limit reported",
+      g.power_limit ? 100 * g.power / g.power_limit : null);
+  }
+  const temps = [["CPU", s.temp.cpu], ["GPU", g && g.temp], ["NVMe", s.temp.nvme]].filter(x => x[1] != null);
+  if (temps.length) {
+    const hot = Math.max(...temps.map(x => x[1]));
+    t += tile("Temperature", hot.toFixed(0) + " °C", temps.map(([k, v]) => `${k} ${v.toFixed(0)}°`).join(" · "), null);
+  }
+  q(h, "tiles").innerHTML = t;
+
+  const now = s.ts;
+  chartDefs.forEach(c => {
+    const ch = h.charts[c.k];
+    ch.opt.max = c.maxFn ? c.maxFn(h) : c.max;
+    ch.set(h.history, now, st.range, Math.max(15, 3 * (h.info.interval || 2)));
+    const last = h.history[h.history.length - 1];
+    ch.el.querySelector("[data-v]").textContent = c.series.map(x => c.fmt(x.get(last))).join(" / ");
+  });
+
+  q(h, "load").textContent = `load ${s.load[0].toFixed(2)} / ${s.ncpu}`;
+  q(h, "cores").innerHTML = s.cores.map((p, i) =>
+    `<div title="core ${i}: ${p.toFixed(0)}%" style="background:color-mix(in oklab, var(--seq-hi) ${p.toFixed(0)}%, var(--seq-lo));color:${p > 55 ? "var(--surface)" : "var(--ink-2)"}">${p.toFixed(0)}</div>`).join("");
+
+  q(h, "disks").innerHTML = s.disks.map(d => {
+    const p = 100 * d.used / d.total, lv = level(p);
+    return `<div class="disk"><span class="m" title="${esc(d.mount)}">${esc(d.mount)}</span><div class="bar"><i class="${lv}" style="width:${p}%"></i></div>` +
+      `<span class="num">${lv ? "⚠ " : ""}${fmtBytes(d.used)} / ${fmtBytes(d.total)} (${p.toFixed(0)}%)</span></div>`;
+  }).join("");
+
+  q(h, "gprocs").innerHTML = g && g.procs.length
+    ? `<table><colgroup><col style="width:70px"><col><col style="width:90px"></colgroup><tr><th>PID</th><th>Process</th><th class="r">GPU mem</th></tr>` +
+      g.procs.map(p => `<tr><td class="num">${p.pid}</td><td>${esc(p.name)}</td><td class="r num">${fmtBytes(p.mem)}</td></tr>`).join("") + `</table>`
+    : `<div class="empty">No GPU compute processes</div>`;
+
+  q(h, "ptitle").textContent = st.sort === "cpu" ? "Top processes by CPU" : "Top processes by RAM";
+  q(h, "nproc").textContent = `${s.nproc} processes`;
+  const rows = st.sort === "cpu" ? s.procs_cpu : s.procs_mem;
+  q(h, "procs").innerHTML = `<table><colgroup><col style="width:64px"><col style="width:84px"><col style="width:58px"><col style="width:76px"><col></colgroup>` +
+    `<tr><th>PID</th><th>User</th><th class="r">CPU</th><th class="r">RAM</th><th>Command</th></tr>` +
+    rows.map(p => `<tr><td class="num">${p.pid}</td><td>${esc(p.user)}</td><td class="r num">${p.cpu.toFixed(0)}%</td>` +
+      `<td class="r num">${fmtBytes(p.rss)}</td><td title="${esc(p.cmd)}">${esc(p.cmd)}</td></tr>`).join("") + `</table>`;
+}
+
+/* ---------- data flow ---------- */
+async function loadState() {
+  const res = await fetch("/api/state"); const hosts = await res.json();
+  for (const x of hosts) {
+    const { history, last, ...info } = x;
+    let h = st.hosts[info.id] || (st.hosts[info.id] = buildHost(info));
+    h.info = info; h.history = history; h.last = last;
+    setStatus(h); renderHost(h);
+  }
+}
+function connect() {
+  const es = new EventSource("/api/stream"), conn = document.getElementById("conn");
+  es.onopen = () => { conn.textContent = "streaming"; loadState().catch(() => {}); };
+  es.onerror = () => { conn.textContent = "server unreachable – retrying…"; };
+  es.addEventListener("status", e => { const i = JSON.parse(e.data), h = st.hosts[i.id]; if (h) { h.info = i; setStatus(h); } });
+  es.addEventListener("sample", e => {
+    const { id, s } = JSON.parse(e.data), h = st.hosts[id]; if (!h) return;
+    h.last = s; h.history.push(slim(s));
+    const cut = s.ts - KEEP; while (h.history.length && h.history[0].ts < cut) h.history.shift();
+    if (!document.hidden) renderHost(h);
+  });
+}
+
+function bindSeg(id, attr, key, apply) {
+  const box = document.getElementById(id);
+  const sync = () => box.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset[attr] == st[key])));
+  box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+    st[key] = attr === "r" ? +b.dataset.r : b.dataset.s; sync(); apply();
+    try { localStorage.setItem("sysmon." + key, st[key]); } catch (err) {} });
+  sync();
+}
+const renderAll = () => Object.values(st.hosts).forEach(renderHost);
+bindSeg("range", "r", "range", renderAll);
+bindSeg("sort", "s", "sort", renderAll);
+document.getElementById("theme").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("sysmon.theme", document.documentElement.dataset.theme); } catch (e) {}
+  renderAll();
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) renderAll(); });
+window.addEventListener("resize", renderAll);
+connect();
+</script>
+</body>
+</html>
